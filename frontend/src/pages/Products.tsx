@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Plus, Eye, Edit2, Trash2, Package, X } from 'lucide-react';
+import { Plus, Eye, Edit2, Trash2, Package, X, Search, Sparkles } from 'lucide-react';
 import { productService } from '../services/productService';
 import type { Product, ProductFormData } from '../types';
 import Table, { type Column } from '../components/Table';
@@ -8,6 +8,7 @@ import Badge from '../components/Badge';
 import ProductForm from '../components/ProductForm';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { formatDateTime, formatNumber } from '../utils/formatters';
+import { searchProducts } from '../utils/searchUtils';
 
 interface OutletContextType {
   addToast: (type: 'success' | 'error' | 'warning' | 'info', message: string) => void;
@@ -20,6 +21,7 @@ export const Products: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Modals state
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -30,10 +32,11 @@ export const Products: React.FC = () => {
   const [serverFormError, setServerFormError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  const fetchProducts = async (page = currentPage) => {
+  const fetchProducts = async () => {
     try {
       setLoading(true);
-      const data = await productService.getAll(page, 20);
+      // Fetch all products so database-only search and ranking work seamlessly on client
+      const data = await productService.getAll(0, 500);
       setProducts(data);
     } catch {
       addToast('error', 'Failed to load products list from catalog.');
@@ -43,8 +46,23 @@ export const Products: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchProducts(currentPage);
-  }, [currentPage]);
+    fetchProducts();
+  }, []);
+
+  // Compute search & similar product recommendations from real database products
+  const { displayedProducts, isSimilarSuggestion, totalCount } = useMemo(() => {
+    const result = searchProducts(products, searchQuery);
+    return {
+      displayedProducts: result.directMatches,
+      isSimilarSuggestion: result.isSimilarSuggestion,
+      totalCount: result.directMatches.length,
+    };
+  }, [products, searchQuery]);
+
+  // Reset page to 0 when search query changes
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [searchQuery]);
 
   const handleOpenAddModal = () => {
     setProductToEdit(null);
@@ -70,7 +88,7 @@ export const Products: React.FC = () => {
         addToast('success', `Product "${formData.name}" created successfully.`);
       }
       setIsFormOpen(false);
-      await fetchProducts(currentPage);
+      await fetchProducts();
       refreshAlertCount();
     } catch (err: unknown) {
       if (typeof err === 'object' && err !== null && 'response' in err) {
@@ -93,7 +111,7 @@ export const Products: React.FC = () => {
       await productService.delete(productToDelete.id);
       addToast('success', `Product "${productToDelete.name}" deleted successfully.`);
       setProductToDelete(null);
-      await fetchProducts(currentPage);
+      await fetchProducts();
       refreshAlertCount();
     } catch {
       addToast('error', 'Failed to delete product.');
@@ -158,6 +176,14 @@ export const Products: React.FC = () => {
       ),
     },
     {
+      header: 'Added On',
+      render: p => (
+        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+          {p.createdAt ? formatDateTime(p.createdAt) : 'Not available'}
+        </span>
+      ),
+    },
+    {
       header: 'Status',
       render: p => getStatusBadge(p),
     },
@@ -208,21 +234,75 @@ export const Products: React.FC = () => {
         <button
           type="button"
           onClick={handleOpenAddModal}
-          className="px-4 py-2.5 bg-[#0066CC] hover:bg-[#1E40AF] text-white text-sm font-semibold rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-300 transition-colors flex items-center gap-2"
+          className="px-4 py-2.5 bg-[#0066CC] hover:bg-[#1E40AF] text-white text-sm font-semibold rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-300 transition-colors flex items-center gap-2 self-start sm:self-auto"
         >
           <Plus className="w-4 h-4" />
           <span>Add Product</span>
         </button>
       </div>
 
+      {/* Search Input Bar */}
+      <div className="bg-white p-4 rounded-xl shadow-xs border border-gray-200 space-y-3">
+        <div className="relative flex items-center">
+          <Search className="w-4 h-4 text-gray-400 absolute left-3 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search products by name or SKU (e.g. Coca-Cola, COKE500, Parle-G, Maggi)..."
+            className="w-full pl-9 pr-10 py-2.5 bg-gray-50 border border-gray-300 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0066CC] focus:border-[#0066CC] transition-all"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-3 text-gray-400 hover:text-gray-600 p-1 rounded-md transition-colors"
+              title="Clear search"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Similar Suggestions Banner (Search Engine-like recommendations) */}
+        {isSimilarSuggestion && searchQuery.trim() && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 animate-fade-in">
+            <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              No exact match found for <strong>"{searchQuery}"</strong>. Showing <strong>{totalCount}</strong> similar products found in database:
+            </span>
+          </div>
+        )}
+
+        {/* Active Search Results Indicator */}
+        {searchQuery.trim() && !isSimilarSuggestion && (
+          <div className="flex items-center justify-between text-xs text-gray-500 px-1">
+            <span>
+              Found <strong>{totalCount}</strong> matching product{totalCount === 1 ? '' : 's'} for <strong>"{searchQuery}"</strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="text-[#0066CC] hover:underline font-medium"
+            >
+              Clear filter
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Table */}
       <Table
         columns={columns}
-        data={products}
+        data={displayedProducts}
         keyExtractor={item => item.id}
         loading={loading}
-        emptyMessage="No products found"
-        emptySubtext="Add your first product to catalog to start recording inventory stock movements."
+        emptyMessage="No products found."
+        emptySubtext={
+          searchQuery.trim()
+            ? `No matching or similar products found in database for "${searchQuery}". Try searching by product name or SKU.`
+            : 'Add your first product to catalog to start recording inventory stock movements.'
+        }
         currentPage={currentPage}
         pageSize={20}
         onPageChange={setCurrentPage}
@@ -299,8 +379,10 @@ export const Products: React.FC = () => {
                 <span className="font-semibold">{viewProduct.hasOpenAlert ? 'Yes (OPEN)' : 'No'}</span>
               </div>
               <div className="flex justify-between py-1.5">
-                <span className="text-gray-500 font-medium">Created On:</span>
-                <span className="text-gray-600 text-xs">{formatDateTime(viewProduct.createdAt)}</span>
+                <span className="text-gray-500 font-medium">Added On:</span>
+                <span className="text-gray-600 text-xs font-semibold">
+                  {viewProduct.createdAt ? formatDateTime(viewProduct.createdAt) : 'Not available'}
+                </span>
               </div>
             </div>
 
