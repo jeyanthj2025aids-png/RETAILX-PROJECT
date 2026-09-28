@@ -6,6 +6,7 @@ import Products from './pages/Products';
 import StockMovements from './pages/StockMovements';
 import ReorderAlerts from './pages/ReorderAlerts';
 import FastMovingReport from './pages/FastMovingReport';
+import Login from './pages/Login';
 
 export const App: React.FC = () => {
   return (
@@ -19,6 +20,7 @@ export const App: React.FC = () => {
           <Route path="reorder-alerts" element={<ReorderAlerts />} />
           <Route path="alerts" element={<Navigate to="/reorder-alerts" replace />} />
           <Route path="reports" element={<FastMovingReport />} />
+          <Route path="login" element={<Login />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
